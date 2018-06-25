@@ -64,6 +64,32 @@ init_logging()
 }
 
 
+void init_peers(bzn::bootstrap_peers& peers, const std::string& peers_file, const std::string& peers_url)
+{
+    if (peers_file.empty() && peers_url.empty())
+    {
+        LOG(error) << "Bootstrap peers must be specified options (bootstrap_file or bootstrap_url)";
+        std::exit(5); // EXC_SOFTWARE
+    }
+
+    if (!peers_file.empty())
+    {
+        peers.fetch_peers_from_file(peers_file);
+    }
+
+    if (!peers_url.empty())
+    {
+        peers.fetch_peers_from_url(peers_url);
+    }
+
+    if (peers.get_peers().empty())
+    {
+        LOG(error) << "Failed to find any bootstrap peers";
+        std::exit(5); // EXC_SOFTWARE
+    }
+}
+
+
 void
 set_logging_level(const bzn::options& options)
 {
@@ -143,6 +169,8 @@ main(int argc, const char* argv[])
     {
         bzn::options options;
 
+        ///////////////
+
         if (!options.parse_command_line(argc, argv))
         {
             return 0;
@@ -155,6 +183,8 @@ main(int argc, const char* argv[])
 
         set_logging_level(options);
 
+
+        ///////////////////////////////////////////////////////////////////////
         // todo: right now we just want to check that an account "has" a balance...
         double eth_balance = bzn::ethereum().get_ether_balance(options.get_ethererum_address(), options.get_ethererum_io_api_token());
 
@@ -164,31 +194,8 @@ main(int argc, const char* argv[])
             return 0;
         }
 
-        bzn::bootstrap_peers init_peers;
-        std::string peers_file = options.get_bootstrap_peers_file();
-        std::string peers_url = options.get_bootstrap_peers_url();
-
-        if (peers_file.empty() && peers_url.empty())
-        {
-            LOG(error) << "Bootstrap peers must be specified options (bootstrap_file or bootstrap_url)";
-            return 0;
-        }
-
-        if (!peers_file.empty())
-        {
-            init_peers.fetch_peers_from_file(peers_file);
-        }
-
-        if (!peers_url.empty())
-        {
-            init_peers.fetch_peers_from_url(peers_url);
-        }
-
-        if(init_peers.get_peers().empty())
-        {
-            LOG(error) << "Failed to find any bootstrap peers";
-            return 0;
-        }
+        bzn::bootstrap_peers peers;
+        init_peers(peers, options.get_bootstrap_peers_file(), options.get_bootstrap_peers_url());
 
         auto io_context = std::make_shared<bzn::asio::io_context>();
 
@@ -208,14 +215,14 @@ main(int argc, const char* argv[])
         auto websocket = std::make_shared<bzn::beast::websocket>();
 
         auto node = std::make_shared<bzn::node>(io_context, websocket, options.get_ws_idle_timeout(), boost::asio::ip::tcp::endpoint{options.get_listener()});
-        auto raft = std::make_shared<bzn::raft>(io_context, node, init_peers.get_peers(), options.get_uuid());
+        auto raft = std::make_shared<bzn::raft>(io_context, node, peers.get_peers(), options.get_uuid());
         auto storage = std::make_shared<bzn::storage>();
         auto crud = std::make_shared<bzn::crud>(node, raft, storage);
         auto audit = std::make_shared<bzn::audit>(io_context, node);
 
         // get our http listener port...
         uint16_t http_port;
-        if (!get_http_listener_port(options, init_peers, http_port))
+        if (!get_http_listener_port(options, peers, http_port))
         {
             LOG(error) << "could not find our http port setting!";
             return 0;
@@ -233,7 +240,7 @@ main(int argc, const char* argv[])
         node->register_for_message("ping",
             [](const bzn::message& msg, std::shared_ptr<bzn::session_base> session)
             {
-                LOG(debug) << '\n' << msg.toStyledString().substr(0, 60) << "...";
+                LOG(debug) << '\n' << msg.toStyledString().substr(0, MAX_MESSAGE_SIZE) << "...";
 
                 auto reply = std::make_shared<bzn::message>(msg);
                 (*reply)["bzn-api"] = "pong";
