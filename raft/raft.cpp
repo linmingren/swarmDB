@@ -58,6 +58,7 @@ raft::raft(
                                : this->create_state_files(peers);
 }
 
+
 void
 raft::setup_peer_tracking(const bzn::peers_list_t& peers)
 {
@@ -388,7 +389,7 @@ raft::create_single_quorum_from_joint_quorum(const bzn::message& joint_quorum)
 
 
 bzn::message
-raft::create_joint_quorum_by_removing_peer(const bzn::message &last_quorum_message, const bzn::uuid_t& peer_uuid)
+raft::create_joint_quorum_by_removing_peer(const bzn::message& last_quorum_message, const bzn::uuid_t& peer_uuid)
 {
     bzn::message joint_quorum;
     joint_quorum["old"] = last_quorum_message;
@@ -727,18 +728,10 @@ raft::handle_request_append_entries_response(const bzn::message& msg, std::share
         return;
     }
 
-    uint32_t consensus_match_index = this->last_majority_replicated_log_index();
-    while (this->commit_index < consensus_match_index)
+    while (this->commit_index < this->last_majority_replicated_log_index())
     {
         this->perform_commit(this->commit_index, this->log_entries[this->commit_index]);
     }
-
-
-    // if the last currnt quorum is a joint quorum then create a single quorum and add it to the log
-
-
-
-
 }
 
 
@@ -755,7 +748,6 @@ raft::append_log_unsafe(const bzn::message& msg, const bzn::log_entry_type entry
 
     return true;
 }
-
 
 
 bool

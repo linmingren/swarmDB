@@ -230,7 +230,6 @@ namespace bzn
             [&]()
             { return std::move(mock_steady_timer); }));
 
-
         bzn::message_handler mh;
         EXPECT_CALL(*this->mock_node, register_for_message("raft", _)).WillOnce(Invoke(
                 [&](const auto&, auto handler)
@@ -584,8 +583,6 @@ namespace bzn
                 , bzn::message());
         mh(msg, this->mock_session);
 
-//        ASSERT_TRUE(resp["data"]["success"].asBool());
-//
         resp.clear();
 
         // send append entry with commit index of 3... and follower commits and updates its match index

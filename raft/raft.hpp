@@ -124,7 +124,7 @@ namespace bzn
         void perform_commit(uint32_t& commit_index, const bzn::log_entry& log_entry);
         bool append_log_unsafe(const bzn::message& msg, const bzn::log_entry_type entry_type);
         bzn::message create_joint_quorum_by_adding_peer(const bzn::message& last_quorum_message, const bzn::message& new_peer);
-        bzn::message create_joint_quorum_by_removing_peer(const bzn::message &last_quorum_message, const bzn::uuid_t& peer_uuid);
+        bzn::message create_joint_quorum_by_removing_peer(const bzn::message& last_quorum_message, const bzn::uuid_t& peer_uuid);
         bzn::message create_single_quorum_from_joint_quorum(const bzn::message& joint_quorum);
 
         bool is_majority(const std::set<bzn::uuid_t>& votes);
