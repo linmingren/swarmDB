@@ -609,7 +609,7 @@ raft::notify_leader_status()
     (*json_ptr)["bzn-api"] = "audit";
     (*json_ptr)["audit-data"] = boost::beast::detail::base64_encode(msg.SerializeAsString());
 
-    for (const auto& peer : this->peers)
+    for (const auto& peer : this->get_all_peers())
     {
         auto ep = boost::asio::ip::tcp::endpoint{boost::asio::ip::address_v4::from_string(peer.host), peer.port};
         this->node->send_message(ep, json_ptr);
@@ -633,7 +633,7 @@ raft::notify_commit(size_t log_index, const std::string& operation)
     (*json_ptr)["audit-data"] = boost::beast::detail::base64_encode(msg.SerializeAsString());
 
 
-    for (const auto& peer : this->peers) 
+    for (const auto& peer : this->get_all_peers())
     {
         auto ep = boost::asio::ip::tcp::endpoint{boost::asio::ip::address_v4::from_string(peer.host), peer.port};
         this->node->send_message(ep, json_ptr);
