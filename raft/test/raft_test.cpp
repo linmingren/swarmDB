@@ -588,7 +588,7 @@ namespace bzn
         // send append entry with commit index of 3... and follower commits and updates its match index
         msg = bzn::create_append_entries_request(TEST_NODE_UUID, 2, 2, 0, 0, 2, entry);
         mh(msg, this->mock_session);
-        EXPECT_EQ(resp["data"]["matchIndex"].asUInt(), Json::UInt(1));
+        EXPECT_EQ(resp["data"]["matchIndex"].asUInt(), Json::UInt(2));
         ASSERT_TRUE(resp["data"]["success"].asBool());
         EXPECT_EQ(commit_handler_times_called, 1);
 
@@ -603,7 +603,7 @@ namespace bzn
                 , entry);
         mh(msg, mock_session);
         ASSERT_FALSE(resp["data"]["success"].asBool());
-        EXPECT_EQ(resp["data"]["matchIndex"].asUInt(), Json::UInt(1));
+        EXPECT_EQ(resp["data"]["matchIndex"].asUInt(), Json::UInt(2));
         EXPECT_EQ(commit_handler_times_called, 1);
 
         resp.clear();
@@ -700,7 +700,6 @@ namespace bzn
                           }
                       });
 
-        raft_source->last_log_index = raft_source->log_entries.back().log_index;
         raft_source->last_log_term = raft_source->log_entries.back().term;
         raft_source->commit_index = raft_source->log_entries.back().log_index;
         raft_source->current_term = raft_source->last_log_term;
@@ -711,7 +710,7 @@ namespace bzn
         // instantiate a raft with the same uuid
         auto raft_target = std::make_shared<bzn::raft>(std::make_shared<NiceMock<bzn::asio::Mockio_context_base>>(), nullptr, TEST_PEER_LIST, TEST_NODE_UUID);
 
-        EXPECT_EQ(raft_target->last_log_index, raft_source->last_log_index);
+        EXPECT_EQ(raft_target->log_entries.size(), raft_source->log_entries.size());
         EXPECT_EQ(raft_target->last_log_term, raft_source->last_log_term);
         EXPECT_EQ(raft_target->commit_index, raft_source->commit_index);
         EXPECT_EQ(raft_target->current_term, raft_source->current_term);

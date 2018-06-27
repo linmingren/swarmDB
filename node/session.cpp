@@ -184,7 +184,7 @@ session::start_idle_timeout()
 {
     this->idle_timer->cancel();
 
-    LOG(debug) << "resetting " << this->ws_idle_timeout.count() << "ms idle timer";
+    //LOG(debug) << "resetting " << this->ws_idle_timeout.count() << "ms idle timer";
 
     this->idle_timer->expires_from_now(this->ws_idle_timeout);
 

@@ -138,6 +138,8 @@ namespace bzn
         void notify_leader_status();
         void notify_commit(size_t log_index, const std::string& operation);
 
+        //uint32_t last_log_index();
+
         // raft state...
         bzn::raft_state current_state = raft_state::follower;
         uint32_t        current_term = 0;
@@ -151,7 +153,6 @@ namespace bzn
         std::unique_ptr<bzn::asio::steady_timer_base> timer;
 
         // indexes...
-        uint32_t last_log_index = 0;
         uint32_t last_log_term  = 0; // not sure if we need this
         uint32_t commit_index   = 1;
         uint32_t timeout_scale  = 1;

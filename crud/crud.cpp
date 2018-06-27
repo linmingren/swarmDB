@@ -241,6 +241,8 @@ crud::handle_ws_crud_messages(const bzn::message& ws_msg, std::shared_ptr<bzn::s
     bzn_msg msg;
     database_response response;
 
+    LOG(debug) << "Got DB message " << ws_msg.toStyledString();
+
     if (!ws_msg.isMember("msg"))
     {
         LOG(error) << "Invalid message: " << ws_msg.toStyledString().substr(0,60) << "...";

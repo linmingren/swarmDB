@@ -186,7 +186,7 @@ raft::request_vote_request()
             // todo: use resolver on hostname...
             auto ep = boost::asio::ip::tcp::endpoint{boost::asio::ip::address_v4::from_string(peer.host), peer.port};
 
-            this->node->send_message(ep, std::make_shared<bzn::message>(bzn::create_request_vote_request(this->uuid, this->current_term, this->last_log_index, this->last_log_term)));
+            this->node->send_message(ep, std::make_shared<bzn::message>(bzn::create_request_vote_request(this->uuid, this->current_term, this->log_entries.size(), this->last_log_term)));
         }
         catch(const std::exception& ex)
         {
@@ -275,7 +275,7 @@ raft::handle_ws_request_vote(const bzn::message& msg, std::shared_ptr<bzn::sessi
     // vote for this peer...
     this->voted_for = msg["data"]["from"].asString();
 
-    bool vote = msg["data"]["lastLogIndex"].asUInt() >= this->last_log_index;
+    bool vote = msg["data"]["lastLogIndex"].asUInt() >= this->log_entries.size();
 
     session->send_message(std::make_shared<bzn::message>(bzn::create_request_vote_response(this->uuid, this->current_term, vote)), true);
 }
@@ -304,49 +304,54 @@ raft::handle_ws_append_entries(const bzn::message& msg, std::shared_ptr<bzn::ses
     uint32_t leader_prev_index = msg["data"]["prevIndex"].asUInt();
     uint32_t entry_term = msg["data"]["entryTerm"].asUInt();
 
-    // if our log entry is empty...
-    if (this->log_entries.empty())
+    uint32_t msg_index = leader_prev_index + 1;
+
+    // Accept the message if its previous index and previous term are consistent with our log
+    if (leader_prev_index < this->log_entries.size() && this->log_entries[leader_prev_index].term == leader_prev_term)
     {
+        LOG(debug) << "Accepting AppendEntries";
         success = true;
 
-        if (!msg["data"]["entries"].empty() && leader_prev_index == 0)
+        // We are accepting the message, so we must throw out anything that conflicts with it
+        if(msg_index < this->log_entries.size() // Our log includes the payload message
+           && entry_term != this->log_entries[msg_index].term) // but is not consistent with it
         {
+            LOG(debug) << "Discarding " << msg_index - log_entries.size() << " conflicting messages";
+            // Throw out everything until we get to the prev. message, which we agreed was consistent
+            while (leader_prev_index < this->log_entries.size() - 1)
+            {
+                // TODO: These need to be deleted on disk as well!
+                this->log_entries.pop_back();
+            }
+        }
+
+        // Now if the message actually has data, and we don't have that data, we can append it.
+        // If it has data but our log is longer, raft guarentees that the data is the same.
+        if (!msg["data"]["entries"].empty() && msg_index == this->log_entries.size())
+        {
+            LOG(debug) << "Appending the entry in the AppendEntries";
             this->log_entries.emplace_back(
-                log_entry{bzn::log_entry_type::log_entry, ++this->last_log_index, entry_term, msg["data"]["entries"]});
+                    log_entry{bzn::log_entry_type::log_entry, uint32_t(this->log_entries.size()), entry_term, msg["data"]["entries"]});
         }
     }
     else
     {
-        if (this->log_entries.back().log_index == leader_prev_index &&
-            this->log_entries.back().term == leader_prev_term)
+        // We don't agree with or don't have the previous index the leader thinks we have, so saying no will
+        // tell the leader to send older data
+        if (leader_prev_index < this->log_entries.size())
         {
-            success = true;
-
-            if (!msg["data"]["entries"].empty())
-            {
-                this->log_entries.emplace_back(
-                    log_entry{bzn::log_entry_type::log_entry, ++this->last_log_index, entry_term, msg["data"]["entries"]});
-            }
+            LOG(debug) << "Rejecting AppendEntries because I do not have the previous index";
         }
         else
         {
-            // todo: we are out of sync with leader so lets walk back and pop the prev index?
-            if (msg["data"]["commitIndex"].asUInt() < this->last_log_index)
-            {
-                if (this->commit_index < this->last_log_index)
-                {
-                    this->log_entries.pop_back();
-                    --this->last_log_index;
-                }
-                else
-                {
-                    LOG(debug) << "at commit index: " << this->commit_index;
-                }
-            }
+            LOG(debug) << "Rejecting AppendEntries because I do not agree with the previous index";
         }
+        success = false;
     }
 
-    auto resp_msg = std::make_shared<bzn::message>(bzn::create_append_entries_response(this->uuid, this->current_term, success, this->last_log_index));
+    auto match_index = std::min(this->log_entries.size(), (size_t) msg_index+1);
+
+    auto resp_msg = std::make_shared<bzn::message>(bzn::create_append_entries_response(this->uuid, this->current_term, success, match_index));
 
     LOG(debug) << "Sending WS message:\n" << resp_msg->toStyledString().substr(0, MAX_MESSAGE_SIZE) << "...";
 
@@ -534,9 +539,10 @@ raft::handle_ws_raft_messages(const bzn::message& msg, std::shared_ptr<bzn::sess
 
             if (msg["cmd"].asString() == "AppendEntries")
             {
+                // TODO: We should either process this message properly, or just drop it after updating term
                 this->leader = msg["data"]["from"].asString();
 
-                auto resp_msg = std::make_shared<bzn::message>(bzn::create_append_entries_response(this->uuid, this->current_term, false, this->last_log_index));
+                auto resp_msg = std::make_shared<bzn::message>(bzn::create_append_entries_response(this->uuid, this->current_term, false, this->log_entries.size()));
 
                 LOG(debug) << "Sending WS message:\n" << resp_msg->toStyledString().substr(0, MAX_MESSAGE_SIZE) << "...";
 
@@ -603,7 +609,7 @@ raft::notify_leader_status()
     audit_message msg;
     msg.mutable_leader_status()->set_term(this->current_term);
     msg.mutable_leader_status()->set_leader(this->uuid);
-    msg.mutable_leader_status()->set_current_log_index(this->last_log_index);
+    msg.mutable_leader_status()->set_current_log_index(this->log_entries.size());
     msg.mutable_leader_status()->set_current_commit_index(this->commit_index);
 
     auto json_ptr = std::make_shared<bzn::message>();
@@ -659,28 +665,19 @@ raft::request_append_entries()
             uint32_t prev_term{};
             uint32_t entry_term{};
 
-            if (this->peer_match_index[peer.uuid] == 0 && !this->log_entries.empty())
+            if (this->peer_match_index[peer.uuid] < this->log_entries.size())
             {
-                msg = this->log_entries.front().msg;
-                entry_term = this->log_entries.front().term;
+                auto index = this->peer_match_index[peer.uuid];
+                prev_index = index-1;
+                prev_term = this->log_entries[prev_index].term;
+
+                msg = this->log_entries[index].msg;
+                entry_term = this->log_entries[index].term;
             }
             else
             {
-                for (const log_entry& entry : boost::adaptors::reverse(this->log_entries))
-                {
-                    if (entry.log_index == this->peer_match_index[peer.uuid])
-                    {
-                        prev_index = entry.log_index;
-                        prev_term  = entry.term;
-
-                        if (entry.log_index < this->log_entries.size())
-                        {
-                            msg = this->log_entries[entry.log_index].msg;
-                            entry_term = this->log_entries[entry.log_index].term;
-                        }
-                        break;
-                    }
-                }
+                prev_index = this->log_entries.size()-1;
+                prev_term = this->log_entries[prev_index].term;
             }
 
             // todo: use resolver on hostname...
@@ -744,7 +741,9 @@ raft::append_log_unsafe(const bzn::message& msg, const bzn::log_entry_type entry
         return false;
     }
 
-    this->log_entries.emplace_back(log_entry{entry_type, ++this->last_log_index, this->current_term, msg});
+    LOG(debug) << "Appending to my log: " << msg.toStyledString();
+
+    this->log_entries.emplace_back(log_entry{entry_type, uint32_t(this->log_entries.size()), this->current_term, msg});
 
     return true;
 }
@@ -875,7 +874,7 @@ raft::save_state()
     }
 
     std::ofstream os( path.string() ,std::ios::out | std::ios::binary);
-    os << this->last_log_index  << " " << this->last_log_term << " " << this->commit_index << " " <<  this->current_term;
+    os << this->last_log_term << " " << this->commit_index << " " <<  this->current_term;
     os.close();
 }
 
@@ -883,14 +882,12 @@ raft::save_state()
 void
 raft::load_state()
 {
-    this->last_log_index = std::numeric_limits<uint32_t>::max();
     this->last_log_term = std::numeric_limits<uint32_t>::max();
     this->commit_index = std::numeric_limits<uint32_t>::max();
     this->current_term = std::numeric_limits<uint32_t>::max();
     std::ifstream is(this->state_path(), std::ios::in | std::ios::binary);
-    is >> this->last_log_index >> this->last_log_term >> this->commit_index >> this->current_term;
-    if (std::numeric_limits<uint32_t>::max()==this->last_log_index
-        || std::numeric_limits<uint32_t>::max()==this->last_log_term
+    is >> this->last_log_term >> this->commit_index >> this->current_term;
+    if (std::numeric_limits<uint32_t>::max()==this->last_log_term
         || std::numeric_limits<uint32_t>::max()==this->commit_index
         || std::numeric_limits<uint32_t>::max()==this->current_term)
     {
@@ -1112,7 +1109,7 @@ raft::import_state_files()
     this->load_state();
     this->load_log_entries();
     const auto& last_entry = this->log_entries.back();
-    if (last_entry.log_index!=this->last_log_index || last_entry.term!=this->current_term)
+    if (last_entry.log_index!=this->log_entries.size()-1 || last_entry.term!=this->current_term)
     {
         throw std::runtime_error(MSG_ERROR_INVALID_LOG_ENTRY_FILE);
     }
